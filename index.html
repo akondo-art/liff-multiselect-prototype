@@ -23,6 +23,7 @@
     <button id="send" type="button">送信</button>
     <div id="result"></div>
   </div>
+  <div id="login" style="margin-top:16px; font-size:15px; white-space:pre-wrap;"></div>
   <div id="error"></div>
   <div id="timing"></div>
 
@@ -55,6 +56,31 @@
       renderTiming();
     }
 
+    // ログイン状態の表示。未ログインならログインボタンを出す(PC版のブラウザ用)。
+    function setupLogin() {
+      var box = document.getElementById('login');
+      try {
+        if (!liff.isLoggedIn()) {
+          box.textContent = 'ログイン状態: 未ログイン\n';
+          var b = document.createElement('button');
+          b.textContent = 'LINEでログイン';
+          b.addEventListener('click', function () { liff.login({ redirectUri: location.href }); });
+          box.appendChild(b);
+          return;
+        }
+        var token = liff.getIDToken();
+        var base = 'ログイン状態: ログイン済み / IDトークン: ' + (token ? 'あり' : 'なし(LIFFのScopeにopenidが必要)');
+        box.textContent = base;
+        liff.getProfile().then(function (p) {
+          box.textContent = base + '\n表示名: ' + p.displayName + ' / ユーザーIDの先頭: ' + p.userId.slice(0, 6) + '…';
+        }).catch(function (e) {
+          box.textContent = base + '\nプロフィール取得に失敗: ' + (e && e.message ? e.message : e);
+        });
+      } catch (e) {
+        box.textContent = 'ログイン状態の確認に失敗: ' + (e && e.message ? e.message : e);
+      }
+    }
+
     window.onerror = function (msg, src, line) { showError('想定外のエラー: ' + msg + ' (' + line + '行目)'); };
 
     mark('スクリプト開始');
@@ -81,6 +107,7 @@
         mark('LIFF準備完了');
         showApp();
         envInfo();
+        setupLogin();
       }).catch(function (e) {
         initDone = true;
         mark('LIFF準備失敗');
@@ -98,12 +125,18 @@
       var button = document.getElementById('send');
       button.disabled = true; // 二重送信の防止
       var t0 = performance.now();
-      fetch(GAS_URL + '?items=' + encodeURIComponent(selected.join(',')))
+      var idToken = null;
+      try { idToken = liff.getIDToken(); } catch (e) { /* LIFF未準備なら送らない */ }
+      // text/plain で送ると、ブラウザの事前確認(preflight)が省ける
+      fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ items: selected, idToken: idToken }) })
         .then(function (res) { return res.json(); })
         .then(function (data) {
           button.disabled = false;
           var ms = Math.round(performance.now() - t0);
-          result.textContent = '送信しました: ' + data.items.join('、') + '(' + ms + ' ms)';
+          var who = data.verified ? ('本人確認OK: ' + data.name + ' / ID先頭 ' + data.userIdHead + '…')
+                                  : ('本人確認なし: ' + (data.verifyError || ''));
+          result.textContent = '送信しました: ' + data.items.join('、') + '(' + ms + ' ms)\n' + who;
           marks['送信の往復(直近)'] = ms;
           renderTiming();
         })
