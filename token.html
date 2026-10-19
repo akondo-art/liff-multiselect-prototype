@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>複数選択試作(合言葉つきリンク)</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; font-size: 18px; }
+    label { display: block; padding: 12px 8px; border-bottom: 1px solid #ddd; }
+    input[type=checkbox] { transform: scale(1.5); margin-right: 12px; }
+    button { margin-top: 16px; padding: 12px 24px; font-size: 18px; }
+    #who { margin: 8px 0 16px; font-weight: bold; }
+    #result { margin-top: 16px; font-weight: bold; white-space: pre-wrap; }
+    #error { margin-top: 16px; color: #c00; font-weight: bold; white-space: pre-wrap; }
+    #timing { margin-top: 24px; font-size: 13px; color: #555; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div>提出完了を報告する項目を選んでください(試作・合言葉つきリンク版。ログイン無し)</div>
+  <div id="who">確認中…</div>
+  <div id="app">
+    <label><input type="checkbox" name="item" value="勤怠">勤怠</label>
+    <label><input type="checkbox" name="item" value="手当">手当</label>
+    <label><input type="checkbox" name="item" value="その他">その他</label>
+    <button id="send" type="button" disabled>送信</button>
+    <div id="result"></div>
+  </div>
+  <div id="error"></div>
+  <div id="timing"></div>
+
+  <script>
+    var GAS_URL = 'https://script.google.com/macros/s/AKfycbz-eh5crUBbUwGoGRWufSCdSGKTT9_4h04Cv2fJ9BdPdZ9y5ul8T7gW30ZgQJAKd0kU/exec';
+    var token = new URLSearchParams(location.search).get('t') || '';
+    var verified = false;
+
+    var marks = {};
+    function mark(name) {
+      marks[name] = Math.round(performance.now());
+      var lines = ['(ms = 画面の読み込み開始からの時間)'];
+      Object.keys(marks).forEach(function (k) { lines.push(k + ': ' + marks[k] + ' ms'); });
+      document.getElementById('timing').textContent = lines.join('\n');
+    }
+    function post(body) {
+      // text/plain で送ると、ブラウザの事前確認(preflight)が省ける
+      return fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(body) }).then(function (res) { return res.json(); });
+    }
+
+    mark('スクリプト開始');
+    requestAnimationFrame(function () { requestAnimationFrame(function () { mark('チェックボックス表示'); }); });
+
+    if (!token) {
+      document.getElementById('who').textContent = '';
+      document.getElementById('error').textContent = 'リンクに合言葉がありません。Botから届いたリンクを開いてください。';
+    } else {
+      post({ token: token, action: 'check' }).then(function (res) {
+        mark('合言葉の確認');
+        if (res.status === 'ok') {
+          verified = true;
+          document.getElementById('who').textContent = res.store + ' の ' + res.person + ' さんとして報告します';
+          document.getElementById('send').disabled = false;
+        } else {
+          document.getElementById('who').textContent = '';
+          document.getElementById('error').textContent = res.message || '確認に失敗しました。';
+        }
+      }).catch(function (err) {
+        document.getElementById('who').textContent = '';
+        document.getElementById('error').textContent = '通信に失敗しました: ' + (err && err.message ? err.message : err);
+      });
+    }
+
+    document.getElementById('send').addEventListener('click', function () {
+      var selected = Array.prototype.slice.call(document.querySelectorAll('input[name=item]:checked'))
+        .map(function (el) { return el.value; });
+      var result = document.getElementById('result');
+      if (!verified) { return; }
+      if (selected.length === 0) { result.textContent = '1つ以上チェックしてください'; return; }
+      var button = document.getElementById('send');
+      button.disabled = true; // 二重送信の防止
+      var t0 = performance.now();
+      post({ token: token, action: 'submit', items: selected }).then(function (res) {
+        var ms = Math.round(performance.now() - t0);
+        if (res.status === 'ok') {
+          result.textContent = '送信しました: ' + res.items.join('、') + '(' + ms + ' ms)\n' + res.store + ' の ' + res.person + ' さんとして受け付けました。';
+          verified = false; // 使い捨て。この画面からは、もう送れない
+        } else if (res.status === 'noItems') {
+          button.disabled = false;
+          result.textContent = res.message;
+        } else {
+          result.textContent = '受け付けられませんでした: ' + (res.message || res.status);
+          verified = false;
+        }
+      }).catch(function (err) {
+        button.disabled = false;
+        result.textContent = '送信に失敗しました: ' + (err && err.message ? err.message : err);
+      });
+    });
+  </script>
+</body>
+</html>
