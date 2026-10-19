@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>複数選択試作</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; font-size: 18px; }
+    label { display: block; padding: 12px 8px; border-bottom: 1px solid #ddd; }
+    input[type=checkbox] { transform: scale(1.5); margin-right: 12px; }
+    button { margin-top: 16px; padding: 12px 24px; font-size: 18px; }
+    #result { margin-top: 16px; font-weight: bold; }
+    #error { margin-top: 16px; color: #c00; font-weight: bold; white-space: pre-wrap; }
+    #timing { margin-top: 24px; font-size: 13px; color: #555; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="app" hidden>
+    <div>提出完了を報告する項目を選んでください(試作・GitHub Pages版)</div>
+    <label><input type="checkbox" name="item" value="勤怠">勤怠</label>
+    <label><input type="checkbox" name="item" value="手当">手当</label>
+    <label><input type="checkbox" name="item" value="その他">その他</label>
+    <button id="send" type="button">送信</button>
+    <div id="result"></div>
+  </div>
+  <div id="error"></div>
+  <div id="timing"></div>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    var LIFF_ID = '2012091534-DCFCaKEX';
+    // 送信内容を受け取る側(試作のGASのWebアプリ)
+    var GAS_URL = 'https://script.google.com/macros/s/AKfycbz-eh5crUBbUwGoGRWufSCdSGKTT9_4h04Cv2fJ9BdPdZ9y5ul8T7gW30ZgQJAKd0kU/exec';
+
+    // performance.now() は、この画面が読み込まれ始めてからのミリ秒。
+    var marks = {};
+    var envText = '';
+    function mark(name) { marks[name] = Math.round(performance.now()); renderTiming(); }
+    function renderTiming() {
+      var lines = ['(ms = 画面の読み込み開始からの時間)'];
+      Object.keys(marks).forEach(function (k) { lines.push(k + ': ' + marks[k] + ' ms'); });
+      if (envText) { lines.push(''); lines.push(envText); }
+      document.getElementById('timing').textContent = lines.join('\n');
+    }
+    function showError(msg) { document.getElementById('error').textContent += msg + '\n'; }
+
+    function showApp() {
+      document.getElementById('app').hidden = false;
+      requestAnimationFrame(function () { requestAnimationFrame(function () { mark('チェックボックス表示'); }); });
+    }
+    function envInfo() {
+      var info = ['UA: ' + navigator.userAgent.slice(0, 80), '上の階層と同じ=' + (window.top === window)];
+      try { info.push('liff.getOS: ' + liff.getOS() + ' / isInClient: ' + liff.isInClient()); } catch (e) { /* 未初期化なら省略 */ }
+      envText = info.join('\n');
+      renderTiming();
+    }
+
+    window.onerror = function (msg, src, line) { showError('想定外のエラー: ' + msg + ' (' + line + '行目)'); };
+
+    mark('スクリプト開始');
+    showError('診断: LIFFの部品(SDK)の読み込み=' + (typeof liff !== 'undefined' ? '成功' : '失敗'));
+
+    // 6秒たってもLIFFの準備が終わらなければ、画面を出して知らせる
+    var initDone = false;
+    setTimeout(function () {
+      if (initDone) { return; }
+      mark('LIFF準備が6秒終わらず');
+      showError('LIFFの準備が6秒たっても終わりません。画面だけ先に出します。');
+      showApp();
+      envInfo();
+    }, 6000);
+
+    if (typeof liff === 'undefined') {
+      initDone = true;
+      mark('LIFF部品なし');
+      showApp();
+      envInfo();
+    } else {
+      liff.init({ liffId: LIFF_ID }).then(function () {
+        initDone = true;
+        mark('LIFF準備完了');
+        showApp();
+        envInfo();
+      }).catch(function (e) {
+        initDone = true;
+        mark('LIFF準備失敗');
+        showError('LIFFの準備に失敗しました: ' + (e && e.message ? e.message : e));
+        showApp();
+        envInfo();
+      });
+    }
+
+    document.getElementById('send').addEventListener('click', function () {
+      var selected = Array.prototype.slice.call(document.querySelectorAll('input[name=item]:checked'))
+        .map(function (el) { return el.value; });
+      var result = document.getElementById('result');
+      if (selected.length === 0) { result.textContent = '1つ以上チェックしてください'; return; }
+      var button = document.getElementById('send');
+      button.disabled = true; // 二重送信の防止
+      var t0 = performance.now();
+      fetch(GAS_URL + '?items=' + encodeURIComponent(selected.join(',')))
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          button.disabled = false;
+          var ms = Math.round(performance.now() - t0);
+          result.textContent = '送信しました: ' + data.items.join('、') + '(' + ms + ' ms)';
+          marks['送信の往復(直近)'] = ms;
+          renderTiming();
+        })
+        .catch(function (err) {
+          button.disabled = false;
+          result.textContent = '送信に失敗しました: ' + (err && err.message ? err.message : err);
+        });
+    });
+  </script>
+</body>
+</html>
